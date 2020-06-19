@@ -116,7 +116,7 @@ resource "aws_route_table_association" "wp_privat_association" {
   route_table_id = aws_default_route_table.wp_privat_route_table.id
 }
 #security_groups
-resource "aws_security_group" "wp_public_sc" {
+resource "aws_security_group" "wp_public_sg" {
   name        = "wp_public_sg"
   description = "Allow http https and ssh traffic"
   vpc_id      = aws_vpc.wp_vpc.id
@@ -163,4 +163,85 @@ resource "aws_security_group" "wp_privat_sg" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+resource "aws_security_group" "wp_nat_sg" {
+  name        = "wp_nat_sg"
+  description = "Nat instance security_rule"
+  vpc_id      = aws_vpc.wp_vpc.id
+
+  dynamic "ingress" {
+    for_each = ["80", "443"]
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = [var.vpc_cidr]
+    }
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+#===========Instances====================
+#key pair
+resource "aws_key_pair" "wp_auth" {
+  key_name   = var.key_name
+  public_key = file(var.public_key_path)
+}
+#HAPROXY
+resource "aws_instance" "wp_haproxy" {
+  instance_type          = var.haproxy_instance_type
+  ami                    = var.haproxy_ami
+  vpc_security_group_ids = [aws_security_group.wp_public_sg.id]
+  subnet_id              = aws_subnet.wp_public_subnet.id
+  key_name               = aws_key_pair.wp_auth.id
+
+  tags = {
+    Name = "haproxy_instance"
+  }
+}
+#Nat instance
+resource "aws_instance" "wp_nat_instance" {
+  instance_type          = var.nat_instance_type
+  ami                    = var.nat_ami
+  vpc_security_group_ids = [aws_security_group.wp_nat_sg.id]
+  subnet_id              = aws_subnet.wp_public_subnet.id
+  source_dest_check      = false
+  key_name               = aws_key_pair.wp_auth.id
+
+  tags = {
+    Name = "nat_instance"
+  }
+}
+#wordpress
+resource "aws_instance" "wp_instance" {
+  instance_type          = var.wp_instance_type
+  ami                    = var.wp_ami
+  vpc_security_group_ids = [aws_security_group.wp_privat_sg.id]
+  subnet_id              = aws_subnet.wp_privat_subnet.id
+  key_name               = aws_key_pair.wp_auth.id
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = ["ami", "user_data"]
+  }
+
+  tags = {
+    Name = "wp_instance"
+  }
+}
+#==============EIP=======================
+resource "aws_eip" "wp_eip" {
+  instance = aws_instance.wp_instance.id
+  vpc      = true
+}
+resource "aws_eip" "nat_eip" {
+  instance = aws_instance.wp_nat_instance.id
+  vpc      = true
 }
