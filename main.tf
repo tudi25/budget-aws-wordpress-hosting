@@ -2,49 +2,6 @@ provider "aws" {
   region = var.aws_region
 }
 
-#===========IAM================
-resource "aws_iam_instance_profile" "s3_access_profile" {
-  name = "s3_access"
-  role = "aws_iam_role.s3_access_role.name"
-}
-
-resource "aws_iam_role_policy" "s3_access_policy" {
-  name = "s3_access_policy"
-  role = "aws_iam_role.s3_access_role.id"
-
-  policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": "s3:*",
-      "Resource": "*"
-    }
-  ]
-}
-EOF
-}
-
-resource "aws_iam_role" "s3_access_role" {
-  name = "s3_access_role"
-
-  assume_role_policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-  {
-      "Action": "sts:AssumeRole",
-      "Principal": {
-        "Service": "ec2.amazonaws.com"
-  },
-      "Effect": "Allow",
-      "Sid": ""
-      }
-    ]
-}
-EOF
-}
 #-===========VPC============
 resource "aws_vpc" "wp_vpc" {
   cidr_block                       = var.vpc_cidr
@@ -79,6 +36,11 @@ resource "aws_route_table" "wp_public_route_table" {
 }
 resource "aws_default_route_table" "wp_privat_route_table" {
   default_route_table_id = aws_vpc.wp_vpc.default_route_table_id
+
+  route {
+    cidr_block  = "0.0.0.0/0"
+    instance_id = aws_instance.wp_nat_instance.id
+  }
 
   tags = {
     Name = "wp_privat_rt"
@@ -115,6 +77,7 @@ resource "aws_route_table_association" "wp_privat_association" {
   subnet_id      = aws_subnet.wp_privat_subnet.id
   route_table_id = aws_default_route_table.wp_privat_route_table.id
 }
+
 #security_groups
 resource "aws_security_group" "wp_public_sg" {
   name        = "wp_public_sg"
@@ -202,6 +165,7 @@ resource "aws_instance" "wp_haproxy" {
   subnet_id              = aws_subnet.wp_public_subnet.id
   key_name               = aws_key_pair.wp_auth.id
 
+
   tags = {
     Name = "haproxy_instance"
   }
@@ -215,6 +179,7 @@ resource "aws_instance" "wp_nat_instance" {
   source_dest_check      = false
   key_name               = aws_key_pair.wp_auth.id
 
+
   tags = {
     Name = "nat_instance"
   }
@@ -227,9 +192,12 @@ resource "aws_instance" "wp_instance" {
   subnet_id              = aws_subnet.wp_privat_subnet.id
   key_name               = aws_key_pair.wp_auth.id
 
+  root_block_device {
+    volume_size = 15
+  }
+
   lifecycle {
-    prevent_destroy = true
-    ignore_changes  = ["ami", "user_data"]
+    ignore_changes = [ami, user_data]
   }
 
   tags = {
@@ -237,8 +205,8 @@ resource "aws_instance" "wp_instance" {
   }
 }
 #==============EIP=======================
-resource "aws_eip" "wp_eip" {
-  instance = aws_instance.wp_instance.id
+resource "aws_eip" "wp_haproxy_eip" {
+  instance = aws_instance.wp_haproxy.id
   vpc      = true
 }
 resource "aws_eip" "nat_eip" {
